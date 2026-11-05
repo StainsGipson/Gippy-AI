@@ -1,11 +1,11 @@
 fastapi
 uvicorn
 langchain-groq
-langchain-huggingface
 langchain-tavily
 langgraph
 pypdf
 docx2txt
-sentence-transformers
+fastembed
+langchain-community
 python-dotenv
 pydantic

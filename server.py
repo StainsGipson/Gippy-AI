@@ -7,6 +7,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from pypdf import PdfReader
+from langchain_community.embeddings import FastEmbedEmbeddings
 import docx2txt
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -56,8 +57,13 @@ docs = [Document(page_content=combined_text)] if combined_text else [Document(pa
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
 splits = text_splitter.split_documents(docs)
 
-embeddings_model = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+# Initialize the lightweight FastEmbed model
+embeddings_model = FastEmbedEmbeddings(model_name="BAAI/bge-small-en-v1.5")
+
+# Generate the vectors for the documents
 vectors = np.array(embeddings_model.embed_documents([d.page_content for d in splits]))
+# Groq does not provide embeddings directly; you need to use a compatible API
+# Simplest approach: use a free embedding API like Gemini or Jinavectors = np.array(embeddings_model.embed_documents([d.page_content for d in splits]))
 
 class DocSearchTool:
     def __init__(self, vectors, docs, emb_model):
