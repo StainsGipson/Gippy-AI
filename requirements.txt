@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+langchain-groq
+langchain-huggingface
+langchain-tavily
+langgraph
+pypdf
+docx2txt
+sentence-transformers
+python-dotenv
+pydantic
