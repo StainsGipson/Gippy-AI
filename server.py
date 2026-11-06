@@ -38,7 +38,7 @@ init_db()
 
 # --- GEMINI EMBEDDINGS (0MB RAM) ---
 # This uses Google's servers to turn text into math. It is free and doesn't use your RAM.
-embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
 
 # Global memory to store documents for the current session
 document_vectors = []
