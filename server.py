@@ -44,7 +44,7 @@ document_texts = []
 @tool
 def search_documents(question: str) -> str:
     """Search the uploaded documents for information."""
-    if not document_vectors:
+    if len(document_vectors) == 0:
         return "No documents uploaded yet."
     query_vec = np.array(embeddings.embed_query(question))
     similarities = np.dot(document_vectors, query_vec) / (
