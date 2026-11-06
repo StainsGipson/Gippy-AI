@@ -3,6 +3,11 @@ uvicorn
 langchain-groq
 langchain-tavily
 langgraph
+langchain-text-splitters
+langchain-core
+python-multipart
+pypdf
+docx2txt
 python-dotenv
 pydantic
 numpy
