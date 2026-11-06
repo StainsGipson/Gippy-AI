@@ -3,9 +3,6 @@ uvicorn
 langchain-groq
 langchain-tavily
 langgraph
-pypdf
-docx2txt
-fastembed
-langchain-community
 python-dotenv
 pydantic
+numpy
