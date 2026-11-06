@@ -11,3 +11,4 @@ docx2txt
 python-dotenv
 pydantic
 numpy
+langchain-google-genai

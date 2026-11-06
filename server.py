@@ -18,8 +18,7 @@ from langchain_groq import ChatGroq
 from langchain_tavily import TavilySearch
 from langgraph.prebuilt import create_react_agent
 from langchain_core.tools import tool
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.documents import Document
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 warnings.filterwarnings("ignore")
 load_dotenv()
@@ -33,47 +32,38 @@ def init_db():
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, title TEXT, created_at TIMESTAMP)''')
     c.execute('''CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id TEXT, role TEXT, content TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS documents (id INTEGER PRIMARY KEY AUTOINCREMENT, filename TEXT, content TEXT)''')
     conn.commit()
     conn.close()
 init_db()
 
-# --- MEMORY-SAFE DOCUMENT STORE ---
-# Instead of heavy local AI embeddings, we use a fast keyword-based search
-# to keep Render's 512MB free tier from crashing.
-class SimpleSearch:
-    def search(self, query: str, k: int = 3) -> str:
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        c.execute("SELECT filename, content FROM documents")
-        rows = c.fetchall()
-        conn.close()
-        
-        if not rows:
-            return "No documents uploaded yet."
-            
-        # Basic keyword matching for RAG
-        query_words = query.lower().split()
-        scored_docs = []
-        for filename, content in rows:
-            score = sum(1 for word in query_words if word in content.lower())
-            if score > 0:
-                scored_docs.append((score, filename, content))
-        
-        scored_docs.sort(key=lambda x: x[0], reverse=True)
-        top_docs = scored_docs[:k]
-        
-        if not top_docs:
-            return "I couldn't find any relevant information in the uploaded documents."
-            
-        return "\n\n".join([f"From {f}:\n{c[:1000]}..." for s, f, c in top_docs])
+# --- GEMINI EMBEDDINGS (0MB RAM) ---
+# This uses Google's servers to turn text into math. It is free and doesn't use your RAM.
+embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 
-local_doc_store = SimpleSearch()
+# Global memory to store documents for the current session
+document_vectors = []
+document_texts = []
 
 @tool
 def search_documents(question: str) -> str:
-    """Search the uploaded documents (PDFs, Word docs) for information."""
-    return local_doc_store.search(question)
+    """Search the uploaded documents for information."""
+    if not document_vectors:
+        return "No documents have been uploaded yet. Please ask the user to upload a file first."
+    
+    # Convert the user's question into math using Gemini
+    query_vec = np.array(embeddings.embed_query(question))
+    
+    # Compare the question math to the document math
+    similarities = np.dot(document_vectors, query_vec) / (
+        np.linalg.norm(document_vectors, axis=1) * np.linalg.norm(query_vec)
+    )
+    
+    # Get the top 3 most relevant chunks
+    top_k = min(3, len(document_texts))
+    top_indices = np.argsort(similarities)[-top_k:][::-1]
+    
+    results = [document_texts[i] for i in top_indices]
+    return "\n\n".join(results)
 
 @tool
 def get_current_time(timezone: str) -> str:
@@ -89,7 +79,7 @@ llm = ChatGroq(model="openai/gpt-oss-20b", temperature=0.3)
 system_prompt = """You are Gippy AI, an elite, highly intelligent RAG assistant.
 CRITICAL RULES:
 1. **IDENTITY**: Always introduce yourself as Gippy AI.
-2. **DOCUMENTS**: If the user asks about a file they uploaded, use the `search_documents` tool to find the answer.
+2. **DOCUMENTS**: If the user asks about the file they uploaded, you MUST use the `search_documents` tool. Do not guess. If the search returns nothing, tell them you couldn't find it.
 3. **TIME**: Use `get_current_time` for time questions.
 4. **NO LINKS**: Do not output raw URLs.
 """
@@ -102,6 +92,7 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
+    global document_vectors, document_texts
     content = ""
     file_bytes = await file.read()
     
@@ -115,12 +106,16 @@ async def upload_file(file: UploadFile = File(...)):
         elif file.filename.endswith(".txt"):
             content = file_bytes.decode("utf-8")
             
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        c.execute("INSERT INTO documents (filename, content) VALUES (?, ?)", (file.filename, content))
-        conn.commit()
-        conn.close()
-        return {"message": f"Successfully uploaded {file.filename}!"}
+        # Split text into chunks
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+        chunks = text_splitter.split_text(content)
+        
+        # Clear previous documents and embed the new ones
+        document_texts = chunks
+        document_vectors = np.array(embeddings.embed_documents(chunks))
+        
+        return {"message": f"Successfully processed {file.filename}!"}
     except Exception as e:
         return {"message": f"Error processing file: {str(e)}"}
 
@@ -189,7 +184,7 @@ async def chat(request: ChatRequest):
 
     return StreamingResponse(generate(), media_type="text/plain")
 
-# --- RESPONSIVE FRONTEND ---
+# --- FRONTEND (SAME AS BEFORE) ---
 @app.get("/", response_class=HTMLResponse)
 def index():
     return """
@@ -204,8 +199,6 @@ def index():
         :root { --bg: #09090b; --sidebar: #121215; --accent: #8b5cf6; --accent-glow: #a78bfa; --text: #f4f4f5; }
         * { box-sizing: border-box; }
         body { margin: 0; font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
-        
-        /* Sidebar */
         .sidebar { width: 260px; background: var(--sidebar); border-right: 1px solid #27272a; display: flex; flex-direction: column; padding: 20px; transition: transform 0.3s; }
         .sidebar h2 { margin: 0 0 20px 0; font-weight: 600; letter-spacing: 1px; background: linear-gradient(90deg, #8b5cf6, #06b6d4); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-align: center; font-size: 1.5rem; }
         .new-chat-btn { background: var(--accent); color: white; border: none; padding: 12px; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.3s; margin-bottom: 20px; }
@@ -213,8 +206,6 @@ def index():
         .chat-list { flex: 1; overflow-y: auto; }
         .chat-item { padding: 10px; margin-bottom: 8px; border-radius: 6px; cursor: pointer; color: #a1a1aa; transition: 0.2s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .chat-item:hover { background: #27272a; color: white; }
-        
-        /* Main Chat */
         .main { flex: 1; display: flex; flex-direction: column; position: relative; width: 100%; max-width: 100%; }
         .chat-container { flex: 1; overflow-y: auto; padding: 20px 10%; display: flex; flex-direction: column; gap: 20px; scroll-behavior: smooth; }
         .message { max-width: 85%; padding: 12px 18px; border-radius: 12px; line-height: 1.6; font-size: 0.95rem; word-wrap: break-word; }
@@ -222,22 +213,15 @@ def index():
         .msg-bot { align-self: flex-start; background: rgba(139, 92, 246, 0.05); border: 1px solid rgba(139, 92, 246, 0.2); }
         .msg-bot pre { background: #000; padding: 15px; border-radius: 8px; overflow-x: auto; border: 1px solid #333; }
         .msg-bot code { font-family: monospace; font-size: 0.9rem; }
-        
-        /* Input Area */
         .input-area { padding: 15px 10%; background: var(--bg); border-top: 1px solid #27272a; display: flex; flex-direction: column; gap: 10px; }
         .input-wrapper { display: flex; background: #18181b; border: 1px solid #3f3f46; border-radius: 12px; padding: 8px; }
         .input-wrapper:focus-within { border-color: var(--accent); }
         input[type="text"] { flex: 1; background: transparent; border: none; color: white; font-size: 1rem; outline: none; padding: 10px; }
         .send-btn { background: var(--accent); color: white; border: none; width: 40px; height: 40px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
-        
-        /* Upload Button */
         .upload-label { display: inline-block; background: #27272a; color: #a1a1aa; padding: 8px 15px; border-radius: 20px; cursor: pointer; font-size: 0.85rem; border: 1px solid #3f3f46; transition: 0.2s; }
         .upload-label:hover { background: #3f3f46; color: white; }
         #file-upload { display: none; }
-        
-        /* Mobile Toggle */
         .menu-toggle { display: none; background: none; border: none; color: white; font-size: 1.5rem; cursor: pointer; padding: 10px; }
-        
         @media (max-width: 768px) {
             .sidebar { position: absolute; height: 100%; z-index: 10; transform: translateX(-100%); }
             .sidebar.open { transform: translateX(0); }
@@ -250,15 +234,12 @@ def index():
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
-
     <button class="menu-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')">☰</button>
-
     <div class="sidebar">
         <h2>✨ Gippy AI</h2>
         <button class="new-chat-btn" onclick="startNewChat()">+ New Chat</button>
         <div class="chat-list" id="chat-list"></div>
     </div>
-
     <div class="main">
         <div class="chat-container" id="chat-container">
             <div class="message msg-bot">Hello! I am Gippy AI. Upload a PDF or DOCX below, and ask me anything about it!</div>
@@ -275,10 +256,8 @@ def index():
             </div>
         </div>
     </div>
-
     <script>
         let currentConvId = null;
-
         async function loadConversations() {
             const res = await fetch('/api/conversations');
             const convs = await res.json();
@@ -288,14 +267,10 @@ def index():
                 const div = document.createElement('div');
                 div.className = 'chat-item';
                 div.innerText = conv.title;
-                div.onclick = () => {
-                    loadChat(conv.id);
-                    document.querySelector('.sidebar').classList.remove('open'); // Close on mobile
-                };
+                div.onclick = () => { loadChat(conv.id); document.querySelector('.sidebar').classList.remove('open'); };
                 list.appendChild(div);
             });
         }
-
         async function startNewChat() {
             const res = await fetch('/api/new_chat', { method: 'POST' });
             const data = await res.json();
@@ -304,7 +279,6 @@ def index():
             document.querySelector('.sidebar').classList.remove('open');
             loadConversations();
         }
-
         async function loadChat(id) {
             currentConvId = id;
             const res = await fetch(`/api/messages/${id}`);
@@ -313,27 +287,18 @@ def index():
             container.innerHTML = '';
             msgs.forEach(msg => addMessage(msg.role, msg.content));
         }
-
         async function uploadFile() {
             const fileInput = document.getElementById('file-upload');
             const file = fileInput.files[0];
             if (!file) return;
-
             const formData = new FormData();
             formData.append("file", file);
-
-            document.getElementById('upload-status').innerText = "Uploading...";
-
-            const res = await fetch('/api/upload', {
-                method: 'POST',
-                body: formData
-            });
+            document.getElementById('upload-status').innerText = "Embedding document (Please wait)...";
+            const res = await fetch('/api/upload', { method: 'POST', body: formData });
             const data = await res.json();
             document.getElementById('upload-status').innerText = data.message;
-            
-            setTimeout(() => { document.getElementById('upload-status').innerText = ""; }, 3000);
+            setTimeout(() => { document.getElementById('upload-status').innerText = ""; }, 4000);
         }
-
         function addMessage(role, text) {
             const container = document.getElementById('chat-container');
             const div = document.createElement('div');
@@ -343,30 +308,23 @@ def index():
             container.scrollTop = container.scrollHeight;
             return div;
         }
-
         function handleKeyPress(e) { if (e.key === 'Enter') sendMessage(); }
-
         async function sendMessage() {
             const input = document.getElementById('user-input');
             const text = input.value.trim();
             if (!text || !currentConvId) return;
-
             input.value = '';
             addMessage('user', text);
-
             const botDiv = addMessage('assistant', '');
             botDiv.style.opacity = '0.7';
-
             const res = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ conv_id: currentConvId, message: text })
             });
-
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let fullText = "";
-
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
@@ -378,7 +336,6 @@ def index():
             botDiv.style.opacity = '1';
             loadConversations(); 
         }
-
         async function init() {
             await loadConversations();
             const res = await fetch('/api/conversations');
