@@ -70,6 +70,8 @@ CRITICAL RULES:
 1. **DOCUMENTS**: If the user asks ANYTHING about their uploaded files (PDF, DOCX), you MUST use the `search_documents` tool first. Do NOT ask the user to clarify. Search the document and give the answer based on what you find.
 2. **CONTEXT**: If the user says "answers these" or "what is in the pdf", search the document immediately and summarize it.
 3. **IDENTITY**: You are Gippy AI.
+4. **NO TABLES**: Never use markdown tables. Use simple bullet points. If the user asks for multiple cities, list them one by one.
+
 """
 agent = create_react_agent(llm, [get_current_time, search_documents, web_search], prompt=system_prompt)
 
@@ -180,8 +182,7 @@ def index():
     <style>
         :root { --bg: #09090b; --sidebar: #121215; --accent: #8b5cf6; --accent-glow: #a78bfa; --text: #f4f4f5; }
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
-        
+        body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); display: flex; height: 100dvh; overflow: hidden; }        
         /* Sidebar */
         .sidebar { width: 260px; background: var(--sidebar); border-right: 1px solid #27272a; display: flex; flex-direction: column; padding: 20px; flex-shrink: 0; transition: transform 0.3s; z-index: 100; }
         .sidebar h2 { font-weight: 600; background: linear-gradient(90deg, #8b5cf6, #06b6d4); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-align: center; font-size: 1.5rem; margin-bottom: 20px; }
@@ -191,8 +192,7 @@ def index():
         .chat-item:hover { background: #27272a; color: white; }
         
         /* Main Area */
-        .main { flex: 1; display: flex; flex-direction: column; height: 100vh; width: 100%; }
-        .chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+        .main { flex: 1; display: flex; flex-direction: column; height: 100dvh; width: 100%; }        .chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
         .message { max-width: 80%; padding: 12px 18px; border-radius: 12px; line-height: 1.6; font-size: 0.95rem; word-wrap: break-word; }
         .msg-user { align-self: flex-end; background: #27272a; border: 1px solid #3f3f46; }
         .msg-bot { align-self: flex-start; background: rgba(139, 92, 246, 0.05); border: 1px solid rgba(139, 92, 246, 0.2); }
